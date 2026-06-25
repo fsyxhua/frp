@@ -15,8 +15,6 @@
 package v1
 
 import (
-	"context"
-	"fmt"
 	"os"
 
 	"github.com/samber/lo"
@@ -39,6 +37,8 @@ type ClientCommonConfig struct {
 	// clients. If this value is not "", proxy names will automatically be
 	// changed to "{user}.{proxy_name}".
 	User string `json:"user,omitempty"`
+	// ClientID uniquely identifies this frpc instance.
+	ClientID string `json:"clientID,omitempty"`
 
 	// ServerAddr specifies the address of the server to connect to. By
 	// default, this value is "0.0.0.0".
@@ -77,6 +77,9 @@ type ClientCommonConfig struct {
 
 	// Include other config files for proxies.
 	IncludeConfigFiles []string `json:"includes,omitempty"`
+
+	// Store config enables the built-in store source (not configurable via sources list).
+	Store StoreConfig `json:"store,omitempty"`
 }
 
 func (c *ClientCommonConfig) Complete() error {
@@ -101,6 +104,9 @@ type ClientTransportConfig struct {
 	// Valid values are "tcp", "kcp", "quic", "websocket" and "wss". By default, this value
 	// is "tcp".
 	Protocol string `json:"protocol,omitempty"`
+	// WireProtocol specifies the frpc/frps internal wire protocol version.
+	// Valid values are "v1" and "v2". By default, this value is "v1".
+	WireProtocol string `json:"wireProtocol,omitempty"`
 	// The maximum amount of time a dial to server will wait for a connect to complete.
 	DialServerTimeout int64 `json:"dialServerTimeout,omitempty"`
 	// DialServerKeepAlive specifies the interval between keep-alive probes for an active network connection between frpc and frps.
@@ -143,6 +149,7 @@ type ClientTransportConfig struct {
 
 func (c *ClientTransportConfig) Complete() {
 	c.Protocol = util.EmptyOr(c.Protocol, "tcp")
+	c.WireProtocol = util.EmptyOr(c.WireProtocol, "v1")
 	c.DialServerTimeout = util.EmptyOr(c.DialServerTimeout, 10)
 	c.DialServerKeepAlive = util.EmptyOr(c.DialServerKeepAlive, 7200)
 	c.ProxyURL = util.EmptyOr(c.ProxyURL, os.Getenv("http_proxy"))
@@ -202,17 +209,6 @@ type AuthClientConfig struct {
 
 func (c *AuthClientConfig) Complete() error {
 	c.Method = util.EmptyOr(c.Method, "token")
-
-	// Resolve tokenSource during configuration loading
-	if c.Method == AuthMethodToken && c.TokenSource != nil {
-		token, err := c.TokenSource.Resolve(context.Background())
-		if err != nil {
-			return fmt.Errorf("failed to resolve auth.tokenSource: %w", err)
-		}
-		// Move the resolved token to the Token field and clear TokenSource
-		c.Token = token
-		c.TokenSource = nil
-	}
 	return nil
 }
 
@@ -243,6 +239,10 @@ type AuthOIDCClientConfig struct {
 	// Supports http, https, socks5, and socks5h proxy protocols.
 	// If empty, no proxy is used for OIDC connections.
 	ProxyURL string `json:"proxyURL,omitempty"`
+
+	// TokenSource specifies a custom dynamic source for the authorization token.
+	// This is mutually exclusive with every other field of this structure.
+	TokenSource *ValueSource `json:"tokenSource,omitempty"`
 }
 
 type VirtualNetConfig struct {
