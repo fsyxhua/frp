@@ -62,12 +62,23 @@ func (p *TLS2RawPlugin) Handle(ctx context.Context, connInfo *ConnectionInfo) {
 
 	if err := tlsConn.Handshake(); err != nil {
 		xl.Warnf("tls handshake error: %v", err)
+		tlsConn.Close()
 		return
 	}
 	rawConn, err := net.Dial("tcp", p.opts.LocalAddr)
 	if err != nil {
 		xl.Warnf("dial to local addr error: %v", err)
+		tlsConn.Close()
 		return
+	}
+
+	if connInfo.ProxyProtocolHeader != nil {
+		if _, err := connInfo.ProxyProtocolHeader.WriteTo(rawConn); err != nil {
+			xl.Warnf("tls2raw write proxy protocol header to local conn error: %v", err)
+			rawConn.Close()
+			tlsConn.Close()
+			return
+		}
 	}
 
 	libio.Join(tlsConn, rawConn)

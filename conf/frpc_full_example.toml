@@ -1,5 +1,7 @@
 # This configuration file is for reference only. Please do not use this configuration directly to run the program as it may have various issues.
 
+# Optional unique identifier for this frpc instance.
+clientID = "your_client_id"
 # your proxy name will be changed to {user}.{proxy}
 user = "your_name"
 
@@ -101,6 +103,10 @@ transport.poolCount = 5
 # supports tcp, kcp, quic, websocket and wss now, default is tcp
 transport.protocol = "tcp"
 
+# FRP wire protocol used inside the selected transport.
+# supports v1 and v2, default is v1. v2 requires frps support and must be enabled explicitly.
+# transport.wireProtocol = "v1"
+
 # set client binding ip when connect server, default is empty.
 # only when protocol = tcp or websocket, the value will be used.
 transport.connectServerLocalIP = "0.0.0.0"
@@ -146,7 +152,15 @@ transport.tls.enable = true
 
 # Proxy names you want to start.
 # Default is empty, means all proxies.
+# This list is a global allowlist after config + store are merged, so entries
+# created via Store API are also filtered by this list.
+# If start is non-empty, any proxy/visitor not listed here will not be started.
 # start = ["ssh", "dns"]
+
+# Alternative to 'start': You can control each proxy individually using the 'enabled' field.
+# Set 'enabled = false' in a proxy configuration to disable it.
+# If 'enabled' is not set or set to true, the proxy is enabled by default.
+# The 'enabled' field provides more granular control and is recommended over 'start'.
 
 # Specify udp packet size, unit is byte. If not set, the default value is 1500.
 # This parameter should be same between client and server.
@@ -174,6 +188,8 @@ metadatas.var2 = "123"
 # If global user is not empty, it will be changed to {user}.{proxy} such as 'your_name.ssh'
 name = "ssh"
 type = "tcp"
+# Enable or disable this proxy. true or omit this field to enable, false to disable.
+# enabled = true
 localIP = "127.0.0.1"
 localPort = 22
 # Limit bandwidth for this proxy, unit is KB and MB
@@ -258,6 +274,8 @@ healthCheck.httpHeaders=[
 [[proxies]]
 name = "web02"
 type = "https"
+# Disable this proxy by setting enabled to false
+# enabled = false
 localIP = "127.0.0.1"
 localPort = 8000
 subdomain = "web02"

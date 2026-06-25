@@ -168,6 +168,7 @@ func RegisterClientCommonConfigFlags(cmd *cobra.Command, c *v1.ClientCommonConfi
 		cmd.PersistentFlags().StringVarP(&c.Transport.WebsocketPath, "websocket_path", "", "/~!frp", "websocket path")
 	}
 	cmd.PersistentFlags().StringVarP(&c.User, "user", "u", "", "user")
+	cmd.PersistentFlags().StringVar(&c.ClientID, "client-id", "", "unique identifier for this frpc instance")
 	cmd.PersistentFlags().StringVarP(&c.Auth.Token, "token", "t", "", "auth token")
 }
 

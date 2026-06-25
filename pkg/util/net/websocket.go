@@ -30,13 +30,19 @@ type WebsocketListener struct {
 // ln: tcp listener for websocket connections
 func NewWebsocketListener(ln net.Listener) (wl *WebsocketListener) {
 	wl = &WebsocketListener{
+		ln:       ln,
 		acceptCh: make(chan net.Conn),
 	}
 
 	muxer := http.NewServeMux()
 	muxer.Handle(FrpWebsocketPath, websocket.Handler(func(c *websocket.Conn) {
+		// The tunnel payload is a raw byte stream (yamux), not UTF-8 text.
+		// Send it as binary frames; otherwise RFC 6455-compliant intermediaries
+		// (e.g. API gateways/reverse proxies) UTF-8-validate the default text
+		// frames and close the connection on invalid bytes.
+		c.PayloadType = websocket.BinaryFrame
 		notifyCh := make(chan struct{})
-		conn := WrapCloseNotifyConn(c, func() {
+		conn := WrapCloseNotifyConn(c, func(_ error) {
 			close(notifyCh)
 		})
 		wl.acceptCh <- conn

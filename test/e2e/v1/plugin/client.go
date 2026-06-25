@@ -1,17 +1,24 @@
 package plugin
 
 import (
+	"bufio"
 	"crypto/tls"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/onsi/ginkgo/v2"
+	pp "github.com/pires/go-proxyproto"
 
 	"github.com/fatedier/frp/pkg/transport"
+	"github.com/fatedier/frp/pkg/util/log"
 	"github.com/fatedier/frp/test/e2e/framework"
 	"github.com/fatedier/frp/test/e2e/framework/consts"
 	"github.com/fatedier/frp/test/e2e/mock/server/httpserver"
+	"github.com/fatedier/frp/test/e2e/mock/server/streamserver"
 	"github.com/fatedier/frp/test/e2e/pkg/cert"
 	"github.com/fatedier/frp/test/e2e/pkg/port"
 	"github.com/fatedier/frp/test/e2e/pkg/request"
@@ -23,7 +30,8 @@ var _ = ginkgo.Describe("[Feature: Client-Plugins]", func() {
 	ginkgo.Describe("UnixDomainSocket", func() {
 		ginkgo.It("Expose a unix domain socket echo server", func() {
 			serverConf := consts.DefaultServerConfig
-			clientConf := consts.DefaultClientConfig
+			var clientConf strings.Builder
+			clientConf.WriteString(consts.DefaultClientConfig)
 
 			getProxyConf := func(proxyName string, portName string, extra string) string {
 				return fmt.Sprintf(`
@@ -69,10 +77,10 @@ var _ = ginkgo.Describe("[Feature: Client-Plugins]", func() {
 
 			// build all client config
 			for _, test := range tests {
-				clientConf += getProxyConf(test.proxyName, test.portName, test.extraConfig) + "\n"
+				clientConf.WriteString(getProxyConf(test.proxyName, test.portName, test.extraConfig) + "\n")
 			}
 			// run frps and frpc
-			f.RunProcesses([]string{serverConf}, []string{clientConf})
+			f.RunProcesses(serverConf, []string{clientConf.String()})
 
 			for _, test := range tests {
 				framework.NewRequestExpect(f).Port(f.PortByName(test.portName)).Ensure()
@@ -96,7 +104,7 @@ var _ = ginkgo.Describe("[Feature: Client-Plugins]", func() {
 		httpPassword = "123"
 		`, remotePort)
 
-		f.RunProcesses([]string{serverConf}, []string{clientConf})
+		f.RunProcesses(serverConf, []string{clientConf})
 
 		// http proxy, no auth info
 		framework.NewRequestExpect(f).PortName(framework.HTTPSimpleServerPort).RequestModify(func(r *request.Request) {
@@ -130,7 +138,7 @@ var _ = ginkgo.Describe("[Feature: Client-Plugins]", func() {
 		password = "123"
 		`, remotePort)
 
-		f.RunProcesses([]string{serverConf}, []string{clientConf})
+		f.RunProcesses(serverConf, []string{clientConf})
 
 		// http proxy, no auth info
 		framework.NewRequestExpect(f).PortName(framework.TCPEchoServerPort).RequestModify(func(r *request.Request) {
@@ -180,7 +188,7 @@ var _ = ginkgo.Describe("[Feature: Client-Plugins]", func() {
 		httpPassword = "123"
 		`, remotePort, f.TempDirectory, f.TempDirectory, f.TempDirectory)
 
-		f.RunProcesses([]string{serverConf}, []string{clientConf})
+		f.RunProcesses(serverConf, []string{clientConf})
 
 		// from tcp proxy
 		framework.NewRequestExpect(f).Request(
@@ -216,7 +224,7 @@ var _ = ginkgo.Describe("[Feature: Client-Plugins]", func() {
 		localAddr = "127.0.0.1:%d"
 		`, localPort)
 
-		f.RunProcesses([]string{serverConf}, []string{clientConf})
+		f.RunProcesses(serverConf, []string{clientConf})
 
 		tlsConfig, err := transport.NewServerTLSConfig("", "", "")
 		framework.ExpectNoError(err)
@@ -262,7 +270,7 @@ var _ = ginkgo.Describe("[Feature: Client-Plugins]", func() {
 		keyPath = "%s"
 		`, localPort, crtPath, keyPath)
 
-		f.RunProcesses([]string{serverConf}, []string{clientConf})
+		f.RunProcesses(serverConf, []string{clientConf})
 
 		localServer := httpserver.New(
 			httpserver.WithBindPort(localPort),
@@ -308,7 +316,7 @@ var _ = ginkgo.Describe("[Feature: Client-Plugins]", func() {
 		keyPath = "%s"
 		`, localPort, crtPath, keyPath)
 
-		f.RunProcesses([]string{serverConf}, []string{clientConf})
+		f.RunProcesses(serverConf, []string{clientConf})
 
 		tlsConfig, err := transport.NewServerTLSConfig("", "", "")
 		framework.ExpectNoError(err)
@@ -348,7 +356,7 @@ var _ = ginkgo.Describe("[Feature: Client-Plugins]", func() {
 			hostHeaderRewrite = "rewrite.test.com"
 			`, remotePort, localPort)
 
-			f.RunProcesses([]string{serverConf}, []string{clientConf})
+			f.RunProcesses(serverConf, []string{clientConf})
 
 			localServer := httpserver.New(
 				httpserver.WithBindPort(localPort),
@@ -383,7 +391,7 @@ var _ = ginkgo.Describe("[Feature: Client-Plugins]", func() {
 			requestHeaders.set.x-from-where = "frp"
 			`, remotePort, localPort)
 
-			f.RunProcesses([]string{serverConf}, []string{clientConf})
+			f.RunProcesses(serverConf, []string{clientConf})
 
 			localServer := httpserver.New(
 				httpserver.WithBindPort(localPort),
@@ -429,12 +437,93 @@ var _ = ginkgo.Describe("[Feature: Client-Plugins]", func() {
 		keyPath = "%s"
 		`, localPort, crtPath, keyPath)
 
-		f.RunProcesses([]string{serverConf}, []string{clientConf})
+		f.RunProcesses(serverConf, []string{clientConf})
 
 		localServer := httpserver.New(
 			httpserver.WithBindPort(localPort),
 			httpserver.WithResponse([]byte("test")),
 		)
+		f.RunServer("", localServer)
+
+		framework.NewRequestExpect(f).
+			Port(vhostHTTPSPort).
+			RequestModify(func(r *request.Request) {
+				r.HTTPS().HTTPHost("example.com").TLSConfig(&tls.Config{
+					ServerName:         "example.com",
+					InsecureSkipVerify: true,
+				})
+			}).
+			ExpectResp([]byte("test")).
+			Ensure()
+	})
+
+	ginkgo.It("tls2raw with proxy protocol v2", func() {
+		generator := &cert.SelfSignedCertGenerator{}
+		artifacts, err := generator.Generate("example.com")
+		framework.ExpectNoError(err)
+		crtPath := f.WriteTempFile("tls2raw_proxy_protocol_server.crt", string(artifacts.Cert))
+		keyPath := f.WriteTempFile("tls2raw_proxy_protocol_server.key", string(artifacts.Key))
+
+		serverConf := consts.DefaultServerConfig
+		vhostHTTPSPort := f.AllocPort()
+		serverConf += fmt.Sprintf(`
+		vhostHTTPSPort = %d
+		`, vhostHTTPSPort)
+
+		localPort := f.AllocPort()
+		clientConf := consts.DefaultClientConfig + fmt.Sprintf(`
+		[[proxies]]
+		name = "tls2raw-proxy-protocol-test"
+		type = "https"
+		customDomains = ["example.com"]
+		transport.proxyProtocolVersion = "v2"
+		[proxies.plugin]
+		type = "tls2raw"
+		localAddr = "127.0.0.1:%d"
+		crtPath = "%s"
+		keyPath = "%s"
+		`, localPort, crtPath, keyPath)
+
+		f.RunProcesses(serverConf, []string{clientConf})
+
+		localServer := streamserver.New(streamserver.TCP, streamserver.WithBindPort(localPort),
+			streamserver.WithCustomHandler(func(c net.Conn) {
+				defer c.Close()
+
+				writeResp := func(body string) {
+					_, _ = fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(body), body)
+				}
+
+				rd := bufio.NewReader(c)
+				ppHeader, err := pp.Read(rd)
+				if err != nil {
+					log.Errorf("read proxy protocol error: %v", err)
+					writeResp("missing proxy protocol")
+					return
+				}
+				if ppHeader.Version != 2 {
+					log.Errorf("unexpected proxy protocol version: %d", ppHeader.Version)
+					writeResp("unexpected proxy protocol version")
+					return
+				}
+				srcAddr, ok := ppHeader.SourceAddr.(*net.TCPAddr)
+				if !ok || srcAddr.IP.String() != "127.0.0.1" {
+					log.Errorf("unexpected proxy protocol source address: %v", ppHeader.SourceAddr)
+					writeResp("unexpected proxy protocol source address")
+					return
+				}
+
+				req, err := http.ReadRequest(rd)
+				if err != nil {
+					log.Errorf("read http request after proxy protocol error: %v", err)
+					writeResp("missing http request")
+					return
+				}
+				_, _ = io.Copy(io.Discard, req.Body)
+				_ = req.Body.Close()
+
+				writeResp("test")
+			}))
 		f.RunServer("", localServer)
 
 		framework.NewRequestExpect(f).
