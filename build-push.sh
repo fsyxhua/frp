@@ -8,6 +8,8 @@ set -euo pipefail
 # Environment overrides:
 #   REGISTRY=reg.example.com/ns ./build-push.sh v0.60.0
 #   REGISTRY_MIRROR=https://registry.linkease.net:5443 ./build-push.sh
+#   GOPROXY=https://goproxy.cn,direct ./build-push.sh v0.60.0
+#   NPM_REGISTRY=https://registry.npmmirror.com ./build-push.sh v0.60.0
 #   BUILDER=multi-builder ./build-push.sh
 #   DEFAULT_PLATFORMS=linux/amd64,linux/arm64 ./build-push.sh
 #   AMD64_LEVELS="v2 v3 v4" ./build-push.sh
@@ -22,6 +24,8 @@ DEFAULT_PLATFORMS="${DEFAULT_PLATFORMS:-linux/amd64,linux/arm64}"
 AMD64_LEVELS="${AMD64_LEVELS:-v2 v3 v4}"
 PUSH_LATEST="${PUSH_LATEST:-false}"
 REGISTRY_MIRROR="${REGISTRY_MIRROR:-https://registry.linkease.net:5443}"
+GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
+NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
 BUILD_WEB="${BUILD_WEB:-true}"
 RECREATE_BUILDER="${RECREATE_BUILDER:-false}"
 
@@ -42,6 +46,8 @@ Options:
   -l, --push-latest         Also push latest tags while building a version tag.
   -m, --mirror <url>        Docker registry mirror URL (default: https://registry.linkease.net:5443).
       --no-mirror           Disable registry mirror for buildx.
+      --goproxy <url>       Go proxy mirror URL (default: https://goproxy.cn,direct).
+      --npm-registry <url>  NPM registry mirror URL (default: https://registry.npmmirror.com).
       --skip-web-build      Skip pre-building frontend web static assets.
       --recreate-builder    Force recreate the buildx builder instance to apply new config/mirror.
   -h, --help                Show this help message.
@@ -61,6 +67,14 @@ while [[ $# -gt 0 ]]; do
         --no-mirror)
             REGISTRY_MIRROR=""
             shift
+            ;;
+        --goproxy)
+            GOPROXY="$2"
+            shift 2
+            ;;
+        --npm-registry)
+            NPM_REGISTRY="$2"
+            shift 2
             ;;
         --skip-web-build)
             BUILD_WEB=false
@@ -94,13 +108,14 @@ build_web() {
 
     echo "=================================================="
     echo "Building web frontend assets (once for all architectures)"
+    echo "NPM registry: ${NPM_REGISTRY}"
     echo "=================================================="
 
     if command -v npm >/dev/null 2>&1; then
         echo "Using local npm to build web assets..."
         (
             cd web
-            npm install
+            npm install --registry="${NPM_REGISTRY}"
             npm run build --workspace frps
             npm run build --workspace frpc
         )
@@ -108,7 +123,7 @@ build_web() {
         echo "Local npm not found. Building web assets using node:22 container..."
         local workspace_dir
         workspace_dir="$(pwd)"
-        docker run --rm -v "${workspace_dir}:/app" -w /app/web node:22 sh -c "npm install && npm run build --workspace frps && npm run build --workspace frpc"
+        docker run --rm -v "${workspace_dir}:/app" -w /app/web node:22 sh -c "npm install --registry=${NPM_REGISTRY} && npm run build --workspace frps && npm run build --workspace frpc"
     fi
 
     echo "Web frontend assets built successfully."
@@ -168,7 +183,7 @@ build_and_push() {
     docker buildx build \
         -f "${dockerfile}" \
         --platform "${platform}" \
-        --build-arg "WEB_BUILDER=external" \
+        --build-arg "GOPROXY=${GOPROXY}" \
         "${tag_args[@]}" \
         --push \
         .
@@ -186,6 +201,8 @@ main() {
     echo "Default platforms: ${DEFAULT_PLATFORMS}"
     echo "AMD64 levels: ${AMD64_LEVELS}"
     echo "Registry mirror: ${REGISTRY_MIRROR:-disabled}"
+    echo "Go proxy: ${GOPROXY}"
+    echo "NPM registry: ${NPM_REGISTRY}"
     echo "Build web once: ${BUILD_WEB}"
     echo "=================================================="
 
@@ -193,14 +210,17 @@ main() {
     ensure_builder
 
     for app in frps frpc; do
-        local dockerfile="dockerfiles/Dockerfile-for-${app}"
+        local dockerfile="dockerfiles/Dockerfile-for-${app}-build"
+        if [[ ! -f "${dockerfile}" ]]; then
+            dockerfile="dockerfiles/Dockerfile-for-${app}"
+        fi
 
         if [[ ! -f "${dockerfile}" ]]; then
             echo "Missing Dockerfile: ${dockerfile}" >&2
             exit 1
         fi
 
-        echo "================= ${app} ================="
+        echo "================= ${app} (using ${dockerfile}) ================="
         local default_images=("${REGISTRY}/${app}:${TAG}")
         if [[ "${PUSH_LATEST}" == "true" && "${TAG}" != "latest" ]]; then
             default_images+=("${REGISTRY}/${app}:latest")
