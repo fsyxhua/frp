@@ -1,4 +1,6 @@
-FROM node:22 AS web-builder
+ARG WEB_BUILDER=internal
+
+FROM --platform=$BUILDPLATFORM node:22 AS web-builder-internal
 
 COPY web/package.json /web/package.json
 COPY web/shared/ /web/shared/
@@ -8,18 +10,31 @@ RUN npm install
 WORKDIR /web/frps
 RUN npm run build
 
-FROM golang:1.25 AS building
+FROM scratch AS web-builder-external
 
-COPY . /building
-COPY --from=web-builder /web/frps/dist /building/web/frps/dist
+FROM --platform=$BUILDPLATFORM golang:1.25 AS building-internal
 WORKDIR /building
+COPY . /building
+COPY --from=web-builder-internal /web/frps/dist /building/web/frps/dist
 
-RUN env CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -tags frps -o bin/frps ./cmd/frps
+FROM --platform=$BUILDPLATFORM golang:1.25 AS building-external
+WORKDIR /building
+COPY . /building
+
+ARG WEB_BUILDER=internal
+FROM building-${WEB_BUILDER} AS building-base
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+RUN env CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOAMD64=${TARGETVARIANT} \
+    go build -trimpath -ldflags "-s -w" -tags frps -o bin/frps ./cmd/frps
 
 FROM alpine:3
 
 RUN apk add --no-cache tzdata
 
-COPY --from=building /building/bin/frps /usr/bin/frps
+COPY --from=building-base /building/bin/frps /usr/bin/frps
 
 ENTRYPOINT ["/usr/bin/frps"]
