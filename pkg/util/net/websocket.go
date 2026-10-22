@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"golang.org/x/net/websocket"
@@ -22,8 +23,11 @@ func SetFrpWebsocketPath(path string) {
 type WebsocketListener struct {
 	ln       net.Listener
 	acceptCh chan net.Conn
+	done     chan struct{}
 
 	server *http.Server
+
+	closeOnce sync.Once
 }
 
 // NewWebsocketListener to handle websocket connections
@@ -32,6 +36,7 @@ func NewWebsocketListener(ln net.Listener) (wl *WebsocketListener) {
 	wl = &WebsocketListener{
 		ln:       ln,
 		acceptCh: make(chan net.Conn),
+		done:     make(chan struct{}),
 	}
 
 	muxer := http.NewServeMux()
@@ -45,7 +50,14 @@ func NewWebsocketListener(ln net.Listener) (wl *WebsocketListener) {
 		conn := WrapCloseNotifyConn(c, func(_ error) {
 			close(notifyCh)
 		})
-		wl.acceptCh <- conn
+		select {
+		case <-wl.done:
+			conn.Close()
+			return
+		case wl.acceptCh <- conn:
+			// A ready handoff may win when Close races with it. Once delivered,
+			// the connection is owned by the caller of Accept.
+		}
 		<-notifyCh
 	}))
 
@@ -62,14 +74,21 @@ func NewWebsocketListener(ln net.Listener) (wl *WebsocketListener) {
 }
 
 func (p *WebsocketListener) Accept() (net.Conn, error) {
-	c, ok := <-p.acceptCh
-	if !ok {
+	select {
+	case <-p.done:
 		return nil, ErrWebsocketListenerClosed
+	default:
 	}
-	return c, nil
+	select {
+	case <-p.done:
+		return nil, ErrWebsocketListenerClosed
+	case c := <-p.acceptCh:
+		return c, nil
+	}
 }
 
 func (p *WebsocketListener) Close() error {
+	p.closeOnce.Do(func() { close(p.done) })
 	return p.server.Close()
 }
 
