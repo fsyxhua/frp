@@ -120,10 +120,10 @@ build_web() {
             npm run build --workspace frpc
         )
     else
-        echo "Local npm not found. Building web assets using node:22 container..."
+        echo "Local npm not found. Building web assets using node:24 container..."
         local workspace_dir
         workspace_dir="$(pwd)"
-        docker run --rm -v "${workspace_dir}:/app" -w /app/web node:22 sh -c "npm install --registry=${NPM_REGISTRY} && npm run build --workspace frps && npm run build --workspace frpc"
+        docker run --rm -v "${workspace_dir}:/app" -w /app/web node:24 sh -c "npm install --registry=${NPM_REGISTRY} && npm run build --workspace frps && npm run build --workspace frpc"
     fi
 
     echo "Web frontend assets built successfully."
